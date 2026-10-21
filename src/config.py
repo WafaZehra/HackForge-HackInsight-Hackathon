@@ -50,3 +50,19 @@ SPIKE_K = 12.0
 STALE_GRACE_HOURS = 6
 PSI_THRESHOLD = 0.25
 PSI_MIN_OBS = 500
+
+MODEL_DIR = DATA / "model"
+SEED = 42
+HORIZON_DAYS = 1
+BASELINE = "persistence_1d"
+TEST_DAYS = 90
+CV_FOLDS = 4
+CV_BLOCK_DAYS = 60
+INTERVAL_ALPHA = 0.2
+ALERT_THRESHOLD = 37.5
+BOOTSTRAP_N = 2000
+BOOTSTRAP_BLOCK_DAYS = 7
+HGB_GRID = [
+    {"learning_rate": lr, "max_depth": d, "max_iter": it, "min_samples_leaf": leaf, "l2_regularization": 1.0}
+    for lr in (0.03, 0.06) for d in (3, 5) for it in (150, 300) for leaf in (20,)
+]

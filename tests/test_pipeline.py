@@ -265,3 +265,25 @@ def test_gold_daily_uses_pkt_day_and_completeness_rule(tmp_path):
     assert out["date_pkt"].astype(str).tolist() == ["2025-01-01", "2025-01-02", "2025-01-03"]
     assert out.loc[0, "pm25_mean_24h"] == 20.0 and bool(out.loc[0, "exceeds_who_pm25_24h"])
     assert np.isnan(out.loc[1, "pm25_mean_24h"])
+
+
+def test_ingest_skips_identical_duplicate_copies(tmp_path, monkeypatch):
+    content = synthetic_csv([row(h) for h in range(3)]).encode()
+    for sub in ("Raw/Lahore", "Data/Raw/Lahore"):
+        d = tmp_path / "in" / sub
+        d.mkdir(parents=True)
+        (d / "lahore_Gulberg.csv").write_bytes(content)
+    monkeypatch.setattr(C, "RAW", tmp_path / "raw")
+    monkeypatch.setattr(C, "MANIFEST", tmp_path / "manifest.csv")
+    assert len(acquire.ingest(tmp_path / "in")) == 1
+    (tmp_path / "in" / "Data/Raw/Lahore" / "lahore_Gulberg.csv").write_bytes(content + b"x")
+    monkeypatch.setattr(C, "RAW", tmp_path / "raw2")
+    with pytest.raises(acquire.RawIntegrityError):
+        acquire.ingest(tmp_path / "in")
+
+
+def test_load_manifest_collapses_duplicate_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "MANIFEST", tmp_path / "manifest.csv")
+    row_ = {"file": "L/a.csv", "station_id": "l__a", "sha256": "h"}
+    pd.DataFrame([row_, row_]).to_csv(C.MANIFEST, index=False)
+    assert len(acquire.load_manifest()) == 1 and len(pd.read_csv(C.MANIFEST)) == 1

@@ -1,0 +1,9 @@
+{
+  "days": 90,
+  "mae_gain_mean": 0.48048153001612626,
+  "mae_gain_ci_low": 0.18164551937694834,
+  "mae_gain_ci_high": 0.6766687673165295,
+  "skill_ci_low": 0.03297422387591403,
+  "skill_ci_high": 0.10838474017400708,
+  "share_resamples_model_better": 1.0
+}

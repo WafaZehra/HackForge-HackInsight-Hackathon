@@ -1,0 +1,24 @@
+{
+  "pipeline_run_id": "run_20261021T104121Z",
+  "fact_rows": 701760,
+  "fact_content_hash": "5599A3808832",
+  "gold_station_daily_rows": 21960,
+  "finished_utc": "2026-10-21T10:42:55+00:00",
+  "seed": 42,
+  "baseline": "persistence_1d",
+  "best_params": {
+    "learning_rate": 0.03,
+    "max_depth": 3,
+    "max_iter": 300,
+    "min_samples_leaf": 20,
+    "l2_regularization": 1.0
+  },
+  "qhat": 0.12973251889691184,
+  "split": {
+    "test_start": "2026-07-03",
+    "last_target": "2026-09-30"
+  },
+  "sklearn": "1.7.2",
+  "pandas": "2.3.2",
+  "seconds": 62.7
+}

@@ -45,14 +45,18 @@ def build_warehouse(db_path: Path, cleaned_dir: Path, manifest: pd.DataFrame) ->
         con.execute(f"""
             CREATE TABLE gold_station_daily AS
             WITH h AS (
-                SELECT f.station_id, d.city, CAST(f.ts_utc + INTERVAL {off} HOUR AS DATE) AS date_pkt, f.pm25, f.pm10
+                SELECT f.station_id, d.city, CAST(f.ts_utc + INTERVAL {off} HOUR AS DATE) AS date_pkt, f.pm25, f.pm10, f.no2, f.so2, f.o3, f.co
                 FROM fact_aq_hourly f JOIN dim_station d ON f.station_id = d.station_id
                 WHERE d.is_primary_series
             ), agg AS (
                 SELECT station_id, city, date_pkt,
                        count(pm25) AS n_hours_pm25, count(pm10) AS n_hours_pm10, max(pm25) AS pm25_max_1h,
                        CASE WHEN count(pm25) >= {min_h} THEN avg(pm25) END AS pm25_mean_24h,
-                       CASE WHEN count(pm10) >= {min_h} THEN avg(pm10) END AS pm10_mean_24h
+                       CASE WHEN count(pm10) >= {min_h} THEN avg(pm10) END AS pm10_mean_24h,
+                       CASE WHEN count(no2) >= {min_h} THEN avg(no2) END AS no2_mean_24h,
+                       CASE WHEN count(so2) >= {min_h} THEN avg(so2) END AS so2_mean_24h,
+                       CASE WHEN count(o3) >= {min_h} THEN avg(o3) END AS o3_mean_24h,
+                       CASE WHEN count(co) >= {min_h} THEN avg(co) END AS co_mean_24h
                 FROM h GROUP BY station_id, city, date_pkt
             )
             SELECT station_id || ':' || strftime(date_pkt, '%Y%m%d') AS row_id, *,
