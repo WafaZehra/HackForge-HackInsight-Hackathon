@@ -1,11 +1,3 @@
-"""Layer 1 (raw): ingest, fetch, and verify.
-
-Raw files are evidence: copied byte-for-byte, never edited, and tied to manifest.csv by SHA-256.
-
-CLI:
-    python -m src.acquire ingest <Data.zip | folder>   # one-off: copy supplied files into data/raw + write manifest
-    python -m src.acquire verify                       # re-hash every raw file against the manifest
-"""
 from __future__ import annotations
 
 import argparse
@@ -27,15 +19,7 @@ MANIFEST_COLUMNS = [
 ]
 
 
-# --------------------------------------------------------------------------------------------
-# Identity helpers
-# --------------------------------------------------------------------------------------------
 def station_identity(city_folder: str, filename: str) -> tuple[str, str, str]:
-    """('Karachi', 'khi_Clifton DHA.csv') -> ('Karachi', 'Clifton DHA', 'karachi__clifton_dha').
-
-    The part before the first underscore is a city prefix (sometimes misspelt, e.g. 'Humza'),
-    so the station name is whatever follows it.
-    """
     city = C.CITY_FIXES.get(city_folder.strip(), city_folder.strip())
     stem = Path(filename).stem
     station = stem.split("_", 1)[1] if "_" in stem else stem
@@ -50,11 +34,7 @@ def build_query_url(lat: float, lon: float, start: str, end: str) -> str:
             f"&start_date={start}&end_date={end}&timezone=GMT&format=csv")
 
 
-# --------------------------------------------------------------------------------------------
-# Ingest (one-off: supplied files -> raw layer + manifest)
-# --------------------------------------------------------------------------------------------
 def _iter_source(source: Path) -> Iterator[tuple[str, str, bytes, datetime]]:
-    """Yield (city_folder, filename, content, file_timestamp) from a zip or a directory."""
     if source.is_file() and source.suffix.lower() == ".zip":
         with zipfile.ZipFile(source) as zf:
             for info in sorted(zf.infolist(), key=lambda i: i.filename):
@@ -72,12 +52,6 @@ def _iter_source(source: Path) -> Iterator[tuple[str, str, bytes, datetime]]:
 
 
 def ingest(source: Path) -> pd.DataFrame:
-    """Copy supplied CSVs into data/raw/<City>/ unchanged and write manifest.csv.
-
-    * The manifest 'query' is RECONSTRUCTED from each file's own location header and date span
-      (the original request was not recorded). 'query_note' says so; it is not a fetch log.
-    * 'fetch_time_utc' is the file's own timestamp (zip entry / mtime), the best evidence available.
-    """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows: list[dict] = []
     for city_folder, filename, content, file_ts in _iter_source(Path(source)):
@@ -110,7 +84,6 @@ def ingest(source: Path) -> pd.DataFrame:
 
 
 def find_incoming() -> Path | None:
-    """First zip in data/incoming, else the folder itself if it holds CSVs."""
     if not C.INCOMING.exists():
         return None
     zips = sorted(C.INCOMING.glob("*.zip"))
@@ -119,15 +92,11 @@ def find_incoming() -> Path | None:
     return C.INCOMING if any(C.INCOMING.rglob("*.csv")) else None
 
 
-# --------------------------------------------------------------------------------------------
-# Verify / fetch (every `make data`)
-# --------------------------------------------------------------------------------------------
 def load_manifest() -> pd.DataFrame:
     return pd.read_csv(C.MANIFEST)
 
 
 def verify_raw(manifest: pd.DataFrame) -> tuple[list[str], list[str]]:
-    """Return (missing_files, hash_mismatches) by re-hashing every raw file."""
     missing, bad = [], []
     for row in manifest.itertuples():
         path = C.RAW / row.file
@@ -139,12 +108,7 @@ def verify_raw(manifest: pd.DataFrame) -> tuple[list[str], list[str]]:
 
 
 def fetch_missing(manifest: pd.DataFrame, files: list[str], *, retries: int = 3, pause_s: float = 1.0) -> None:
-    """Re-download missing raw files from the manifest query and check them against the stored hash.
-
-    Not exercised by the offline tests (needs network). A hash mismatch is a hard stop: the provider
-    may have revised its model data, and silently accepting that would break reproducibility.
-    """
-    import requests  # local import: only needed when something is actually missing
+    import requests
 
     by_file = manifest.set_index("file")
     for rel in files:
@@ -155,7 +119,7 @@ def fetch_missing(manifest: pd.DataFrame, files: list[str], *, retries: int = 3,
                 resp = requests.get(row["query"], timeout=60)
                 resp.raise_for_status()
                 break
-            except requests.RequestException as exc:  # network or HTTP error
+            except requests.RequestException as exc:
                 last_err = exc
                 time.sleep(pause_s * attempt)
         else:
@@ -167,11 +131,10 @@ def fetch_missing(manifest: pd.DataFrame, files: list[str], *, retries: int = 3,
         dest = C.RAW / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(resp.content)
-        time.sleep(pause_s)  # stay inside the free-tier rate limit
+        time.sleep(pause_s)
 
 
 def ensure_raw() -> pd.DataFrame:
-    """Guarantee data/raw matches manifest.csv; ingest from data/incoming on first run."""
     if not C.MANIFEST.exists():
         src = find_incoming()
         if src is None:

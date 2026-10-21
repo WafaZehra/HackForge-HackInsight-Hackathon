@@ -1,8 +1,3 @@
-"""`make data` entry point: raw -> cleaned -> processed, gated, atomic, reproducible.
-
-Layers are built in data/_staging and promoted only after validation passes, so a failed run
-leaves the previous good cleaned/processed layers untouched.
-"""
 from __future__ import annotations
 
 import json
@@ -48,21 +43,17 @@ def main() -> int:
 
     try:
         if C.STAGING.exists():
-            shutil.rmtree(C.STAGING)  # start from a clean staging area every run
-        # 1. raw: ingest on first run, verify SHA-256 against manifest, re-fetch anything missing
+            shutil.rmtree(C.STAGING)
         manifest = acquire.ensure_raw()
         t = step("raw", t0)
-        # 2. cleaned
         result = clean.clean_all(manifest, run_id)
         validate.validate_cleaned(result.hourly)
         clean.write_cleaned(result, C.STAGING / "cleaned")
         t = step("cleaned", t)
-        # 3. processed
         db = C.STAGING / "processed" / C.WAREHOUSE_NAME
         db.parent.mkdir(parents=True, exist_ok=True)
         process.build_warehouse(db, C.STAGING / "cleaned", manifest)
         t = step("processed", t)
-        # 4. quality gate 2 + run record
         checks = validate.validate_warehouse(db, manifest)
         step("validate", t)
         try:
@@ -83,9 +74,7 @@ def main() -> int:
         _promote(C.STAGING / "processed", C.PROCESSED)
         shutil.rmtree(C.STAGING, ignore_errors=True)
         _log_run({**record, "timings_s": timings})
-        _print_summary(result, checks, record, timings)
-        return 0
-    except Exception as exc:  # any gate failure stops the run; previous layers stay in place
+    except Exception as exc:
         finished = datetime.now(timezone.utc)
         _log_run({"run_id": run_id, "started_utc": started.isoformat(timespec="seconds"),
                   "finished_utc": finished.isoformat(timespec="seconds"), "status": "failed",
@@ -95,6 +84,8 @@ def main() -> int:
             traceback.print_exc()
         shutil.rmtree(C.STAGING, ignore_errors=True)
         return 1
+    _print_summary(result, checks, record, timings)
+    return 0
 
 
 def _print_summary(result: clean.CleanResult, checks, record: dict, timings: dict) -> None:
@@ -104,7 +95,10 @@ def _print_summary(result: clean.CleanResult, checks, record: dict, timings: dic
     print(f"stations          {len(s)} supplied, {int(s['is_primary_series'].sum())} unique series (primary)")
     print(f"hourly rows       {len(h):,}   {h['ts_utc'].min():%Y-%m-%d %H:%M} -> {h['ts_utc'].max():%Y-%m-%d %H:%M} UTC")
     print(f"flags             gap_rows={int(h['is_gap_row'].sum()):,} imputed={int(h['was_imputed'].sum()):,} "
-          f"out_of_range={int(h['qc_out_of_range'].sum()):,} pm25>pm10={int(h['qc_pm_inconsistent'].sum()):,}")
+          f"out_of_range={int(h['qc_out_of_range'].sum()):,} pm25>pm10={int(h['qc_pm_inconsistent'].sum()):,} "
+          f"spikes={int(h['qc_spike'].sum()):,}")
+    t = result.tool_runs
+    print(f"DQ agent          {int(t['checks_run'].sum())} tool runs across {len(t)} tools, {int(t['findings'].sum())} findings")
     print(f"decisions logged  {len(d)}  ({', '.join(f'{k}={v}' for k, v in d['action'].value_counts().items()) or 'none'})")
     print(f"quarantined rows  {len(result.quarantine):,}")
     print(f"content hash      {record['fact_content_hash']}")

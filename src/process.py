@@ -1,15 +1,3 @@
-"""Layer 3 (processed): DuckDB warehouse with stable row IDs and gold tables.
-
-All timestamps are stored as naive TIMESTAMP in UTC. PKT (UTC+5) is applied only to bin days.
-
-Tables
-    dim_station            one row per supplied station (+ grid cell, series group, is_primary_series)
-    fact_aq_hourly         cleaned station-hour rows, row_id = '<station_id>:<YYYYMMDDHH>'
-    gold_station_daily     PKT-day means per primary station, with completeness count and WHO flags
-    gold_city_hourly       hourly city mean/min/max over primary stations only
-    gold_city_daily        PKT-day city means (mean of complete station-days) and WHO flags
-    meta_manifest / meta_quality_log / meta_source_freshness / meta_pipeline_run   for the dashboard
-"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,6 +21,8 @@ def build_warehouse(db_path: Path, cleaned_dir: Path, manifest: pd.DataFrame) ->
     hourly = _naive_utc(pd.read_parquet(cleaned_dir / "aq_hourly_cleaned.parquet"), ["ts_utc"])
     stations = _naive_utc(pd.read_parquet(cleaned_dir / "stations.parquet"), ["first_ts_utc", "last_ts_utc"])
     qlog = pd.read_csv(cleaned_dir / "quality_log.csv")
+    drows = pd.read_csv(cleaned_dir / "dq_decision_rows.csv")
+    truns = pd.read_csv(cleaned_dir / "dq_tool_runs.csv")
 
     who25, who10 = C.WHO_2021_24H["pm25"], C.WHO_2021_24H["pm10"]
     min_h, off = C.MIN_HOURS_PER_DAY, C.PKT_OFFSET_HOURS
@@ -43,6 +33,8 @@ def build_warehouse(db_path: Path, cleaned_dir: Path, manifest: pd.DataFrame) ->
         con.register("stations_df", stations)
         con.register("manifest_df", manifest)
         con.register("qlog_df", qlog)
+        con.register("drows_df", drows)
+        con.register("truns_df", truns)
 
         con.execute("CREATE TABLE dim_station AS SELECT * FROM stations_df ORDER BY station_id")
         con.execute("""
@@ -100,6 +92,8 @@ def build_warehouse(db_path: Path, cleaned_dir: Path, manifest: pd.DataFrame) ->
         """)
         con.execute("CREATE TABLE meta_manifest AS SELECT * FROM manifest_df")
         con.execute("CREATE TABLE meta_quality_log AS SELECT * FROM qlog_df")
+        con.execute("CREATE TABLE meta_dq_decision_rows AS SELECT * FROM drows_df")
+        con.execute("CREATE TABLE meta_dq_tool_runs AS SELECT * FROM truns_df")
         con.execute("""
             CREATE TABLE meta_pipeline_run (
                 run_id VARCHAR, started_utc VARCHAR, finished_utc VARCHAR, status VARCHAR,
@@ -121,7 +115,6 @@ def record_run(db_path: Path, run: dict) -> None:
 
 
 def content_hash(db_path: Path) -> str:
-    """Order-independent hash of the fact table's values: identical across rebuilds if the pipeline is deterministic."""
     con = duckdb.connect(str(db_path), read_only=True)
     try:
         return con.execute(

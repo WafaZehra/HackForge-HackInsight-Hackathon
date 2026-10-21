@@ -1,4 +1,3 @@
-"""Quality gates. A failed gate raises ValidationError; build.py then keeps the last good layers."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,16 +9,16 @@ import pandera.pandas as pa
 from . import config as C
 from .acquire import verify_raw
 from .common import ValidationError
+from .dq_agent import FLAG_COLUMNS
 
 
 def validate_cleaned(hourly: pd.DataFrame) -> None:
-    """Gate 1 (schema/contract) on the cleaned layer, using pandera."""
     schema = pa.DataFrameSchema(
         {
             "station_id": pa.Column(str, nullable=False),
             "ts_utc": pa.Column(nullable=False),
             **{v: pa.Column(float, checks=pa.Check.ge(0), nullable=True) for v in C.POLLUTANTS},
-            **{f: pa.Column(bool, nullable=False) for f in ("is_gap_row", "was_imputed", "qc_out_of_range", "qc_pm_inconsistent")},
+            **{f: pa.Column(bool, nullable=False) for f in FLAG_COLUMNS},
         },
         unique=["station_id", "ts_utc"],
         strict=True,
@@ -31,9 +30,8 @@ def validate_cleaned(hourly: pd.DataFrame) -> None:
 
 
 def validate_warehouse(db_path: Path, manifest: pd.DataFrame) -> list[tuple[str, bool, str]]:
-    """Gate 2 (completeness/consistency/volume) on the warehouse. Returns the checks; raises if any fail."""
     con = duckdb.connect(str(db_path), read_only=True)
-    q = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
+    q = lambda sql: con.execute(sql).fetchone()[0]
     checks: list[tuple[str, bool, str]] = []
 
     def check(name: str, ok: bool, detail: str) -> None:
@@ -61,6 +59,15 @@ def validate_warehouse(db_path: Path, manifest: pd.DataFrame) -> list[tuple[str,
         check("gold excludes duplicate series",
               q("SELECT count(*) FROM gold_station_daily g JOIN dim_station d USING (station_id) "
                 "WHERE NOT d.is_primary_series") == 0, "")
+        n_dec = q("SELECT count(*) FROM meta_quality_log")
+        check("every DQ decision has an explanation",
+              q("SELECT count(*) FROM meta_quality_log WHERE explanation IS NULL OR length(trim(explanation)) < 20") == 0,
+              f"{n_dec} decisions")
+        check("DQ decision ids unique", q("SELECT count(DISTINCT decision_id) FROM meta_quality_log") == n_dec, "")
+        orphan = q("SELECT count(*) FROM meta_dq_decision_rows r LEFT JOIN fact_aq_hourly f ON f.row_id = r.row_id "
+                   "WHERE f.row_id IS NULL")
+        check("every DQ decision row id exists in the fact table", orphan == 0, f"{orphan} orphans")
+        check("DQ agent ran its tools", q("SELECT count(*) FROM meta_dq_tool_runs") > 0, "")
         missing, bad = verify_raw(manifest)
         check("raw files match manifest SHA-256", not missing and not bad, f"missing={len(missing)} changed={len(bad)}")
     finally:

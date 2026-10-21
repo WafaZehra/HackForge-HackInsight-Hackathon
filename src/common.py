@@ -1,4 +1,3 @@
-"""Small shared helpers: errors, hashing, slugs, Open-Meteo CSV parsing."""
 from __future__ import annotations
 
 import hashlib
@@ -10,15 +9,15 @@ import pandas as pd
 
 
 class DataContractError(RuntimeError):
-    """The raw file does not look the way the pipeline expects (schema/unit/format)."""
+    pass
 
 
 class RawIntegrityError(RuntimeError):
-    """A raw file is missing, altered, or no longer matches the hash in manifest.csv."""
+    pass
 
 
 class ValidationError(RuntimeError):
-    """A quality gate failed; the run stops and the last good layers are kept."""
+    pass
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -38,10 +37,6 @@ def slugify(text: str) -> str:
 
 
 def parse_open_meteo_text(text: str) -> tuple[dict, pd.DataFrame]:
-    """Split an Open-Meteo CSV into (location metadata dict, hourly DataFrame).
-
-    Layout: a 2-line metadata block, a blank line, then the 'time,...' header and data rows.
-    """
     lines = text.lstrip("\ufeff").splitlines()
     try:
         header_idx = next(i for i, line in enumerate(lines) if line.startswith("time,"))

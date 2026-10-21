@@ -1,4 +1,3 @@
-# Derived layers are rebuilt by `make data`. Raw files + manifest.csv ARE committed (they are the evidence).
 data/cleaned/
 data/processed/
 data/_staging/
