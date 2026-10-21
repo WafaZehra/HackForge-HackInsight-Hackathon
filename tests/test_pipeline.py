@@ -287,3 +287,13 @@ def test_load_manifest_collapses_duplicate_rows(tmp_path, monkeypatch):
     row_ = {"file": "L/a.csv", "station_id": "l__a", "sha256": "h"}
     pd.DataFrame([row_, row_]).to_csv(C.MANIFEST, index=False)
     assert len(acquire.load_manifest()) == 1 and len(pd.read_csv(C.MANIFEST)) == 1
+
+
+def test_annotate_updates_manifest_without_touching_hashes(tmp_path, monkeypatch):
+    monkeypatch.setattr(C, "MANIFEST", tmp_path / "manifest.csv")
+    pd.DataFrame([{"file": "L/a.csv", "station_id": "l__a", "sha256": "h", "fetch_time_utc": "x", "fetch_time_basis": "y"}]).to_csv(C.MANIFEST, index=False)
+    out = acquire.annotate("2026-10-20T18:30+05:00", "recorded by team member", "received from a team member")
+    assert out.loc[0, "fetch_time_utc"] == "2026-10-20T13:30:00+00:00" and out.loc[0, "sha256"] == "h"
+    assert out.loc[0, "provenance"] == "received from a team member"
+    with pytest.raises(ValueError):
+        acquire.annotate("2026-10-20T18:30")

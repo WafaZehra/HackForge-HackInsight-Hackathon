@@ -15,7 +15,7 @@ from .common import (RawIntegrityError, parse_open_meteo_text, sha256_bytes, sha
 
 MANIFEST_COLUMNS = [
     "file", "city", "station", "station_id", "source", "publisher", "url_or_doi", "query", "query_note",
-    "fetch_time_utc", "fetch_time_basis", "ingested_utc", "sha256", "bytes", "rows", "licence",
+    "fetch_time_utc", "fetch_time_basis", "provenance", "ingested_utc", "sha256", "bytes", "rows", "licence",
 ]
 
 
@@ -51,7 +51,7 @@ def _iter_source(source: Path) -> Iterator[tuple[str, str, bytes, datetime]]:
         raise FileNotFoundError(f"ingest source not found: {source}")
 
 
-def ingest(source: Path) -> pd.DataFrame:
+def ingest(source: Path, provenance: str = "") -> pd.DataFrame:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows: list[dict] = []
     seen: dict[str, str] = {}
@@ -78,13 +78,33 @@ def ingest(source: Path) -> pd.DataFrame:
             "source": C.SOURCE_NAME, "publisher": C.PUBLISHER, "url_or_doi": C.SOURCE_URL,
             "query": build_query_url(meta["latitude"], meta["longitude"], start, end),
             "query_note": "reconstructed from file header; original request not logged",
-            "fetch_time_utc": file_ts.isoformat(timespec="seconds"), "fetch_time_basis": "file timestamp",
+            "fetch_time_utc": file_ts.isoformat(timespec="seconds"),
+            "fetch_time_basis": "file timestamp; original download time not recorded", "provenance": provenance,
             "ingested_utc": now, "sha256": digest, "bytes": len(content), "rows": len(hourly),
             "licence": C.LICENCE,
         })
     if not rows:
         raise FileNotFoundError(f"no CSV files found in {source}")
     manifest = pd.DataFrame(rows, columns=MANIFEST_COLUMNS).sort_values("file").reset_index(drop=True)
+    manifest.to_csv(C.MANIFEST, index=False)
+    return manifest
+
+
+def annotate(fetch_time: str | None = None, basis: str | None = None, provenance: str | None = None) -> pd.DataFrame:
+    manifest = pd.read_csv(C.MANIFEST)
+    if "provenance" not in manifest.columns:
+        manifest["provenance"] = ""
+    if fetch_time:
+        stamp = pd.Timestamp(fetch_time)
+        if stamp.tzinfo is None:
+            raise ValueError("fetch time needs a UTC offset, for example 2026-10-20T18:30+05:00")
+        manifest["fetch_time_utc"] = stamp.tz_convert("UTC").isoformat(timespec="seconds")
+    if basis:
+        manifest["fetch_time_basis"] = basis
+    if provenance:
+        manifest["provenance"] = provenance
+    ordered = [c for c in MANIFEST_COLUMNS if c in manifest.columns] + [c for c in manifest.columns if c not in MANIFEST_COLUMNS]
+    manifest = manifest[ordered]
     manifest.to_csv(C.MANIFEST, index=False)
     return manifest
 
@@ -179,11 +199,20 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p_ing = sub.add_parser("ingest", help="copy supplied CSVs into data/raw and write manifest.csv")
     p_ing.add_argument("source", type=Path)
+    p_ing.add_argument("--provenance", default="")
+    p_ann = sub.add_parser("annotate", help="edit fetch time / provenance in manifest.csv without touching raw files")
+    p_ann.add_argument("--fetch-time")
+    p_ann.add_argument("--basis")
+    p_ann.add_argument("--provenance")
     sub.add_parser("verify", help="re-hash raw files against manifest.csv")
     args = ap.parse_args(argv)
     if args.cmd == "ingest":
-        m = ingest(args.source)
+        m = ingest(args.source, args.provenance)
         print(f"ingested {len(m)} files into {C.RAW} ; manifest -> {C.MANIFEST}")
+        return 0
+    if args.cmd == "annotate":
+        m = annotate(args.fetch_time, args.basis, args.provenance)
+        print(f"updated {len(m)} manifest rows")
         return 0
     missing, bad = verify_raw(load_manifest())
     print(f"missing={len(missing)} hash_mismatch={len(bad)}")

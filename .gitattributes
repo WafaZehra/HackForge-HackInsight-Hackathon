@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+data/raw/** -text
+*.parquet binary
+*.duckdb binary
+*.joblib binary
