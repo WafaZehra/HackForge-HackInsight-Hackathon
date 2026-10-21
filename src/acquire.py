@@ -54,11 +54,17 @@ def _iter_source(source: Path) -> Iterator[tuple[str, str, bytes, datetime]]:
 def ingest(source: Path) -> pd.DataFrame:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     rows: list[dict] = []
+    seen: dict[str, str] = {}
     for city_folder, filename, content, file_ts in _iter_source(Path(source)):
         city, station, station_id = station_identity(city_folder, filename)
         rel = f"{city_folder}/{filename}"
         dest = C.RAW / city_folder / filename
         digest = sha256_bytes(content)
+        if rel in seen:
+            if seen[rel] != digest:
+                raise RawIntegrityError(f"{rel}: the source contains two different files with this city and name")
+            continue
+        seen[rel] = digest
         if dest.exists() and sha256_file(dest) != digest:
             raise RawIntegrityError(f"{rel}: raw file already exists with different content; raw is immutable")
         if not dest.exists():
@@ -93,7 +99,19 @@ def find_incoming() -> Path | None:
 
 
 def load_manifest() -> pd.DataFrame:
-    return pd.read_csv(C.MANIFEST)
+    manifest = pd.read_csv(C.MANIFEST)
+    dup = manifest.duplicated("file", keep="first")
+    if dup.any():
+        conflicting = manifest.groupby("file")["sha256"].nunique().gt(1)
+        if conflicting.any():
+            raise RawIntegrityError(f"manifest lists the same file with different hashes: {conflicting[conflicting].index.tolist()[:3]}")
+        print(f"[acquire] manifest listed {int(dup.sum())} file(s) more than once; collapsed to {int((~dup).sum())} unique files")
+        manifest = manifest.loc[~dup].sort_values("file").reset_index(drop=True)
+        manifest.to_csv(C.MANIFEST, index=False)
+    clash = manifest.groupby("station_id")["file"].nunique().gt(1)
+    if clash.any():
+        raise RawIntegrityError(f"different files map to one station id: {clash[clash].index.tolist()[:3]}")
+    return manifest
 
 
 def verify_raw(manifest: pd.DataFrame) -> tuple[list[str], list[str]]:
